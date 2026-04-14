@@ -108,3 +108,26 @@ docker compose up --build
 - Build: `docker build -f Dockerfile.frontend -t bi-frontend .`
 - Start: `streamlit run streamlit_app/app.py --server.address 0.0.0.0 --server.port $PORT`
 - Env: `API_URL=<public backend URL>`
+
+## Deploy to Streamlit Community Cloud
+
+Этот проект имеет отдельный backend (FastAPI), поэтому сначала должен быть доступен публичный URL backend.
+
+1. Убедитесь, что backend уже развернут и доступен по HTTPS, например:
+   - `https://your-backend-domain.com/health` -> `{"status":"ok"}`
+2. Откройте Streamlit Community Cloud и нажмите **Create app**.
+3. Укажите:
+   - Repository: `Rekhan711/Multi-agent`
+   - Branch: `main`
+   - Main file path: `streamlit_app/app.py`
+4. В **Advanced settings -> Secrets** добавьте:
+
+```toml
+api_url = "https://your-backend-domain.com"
+```
+
+5. Нажмите **Deploy** и дождитесь запуска приложения.
+
+Если приложение поднялось, но чат недоступен, проверьте:
+- корректность `api_url` в Secrets,
+- CORS на backend (`CORS_ALLOW_ORIGINS` должен включать URL streamlit.app).
