@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from ..core.knowledge_index import BusinessKnowledgeIndex
 from ..core.llm_client import detect_language, is_smalltalk, smalltalk_response, synthesize_business_answer
@@ -42,7 +42,7 @@ class Orchestrator:
         self._record("knowledge")
         return self.knowledge_index.query(query)
 
-    def handle(self, question: str) -> Dict[str, Any]:
+    def handle(self, question: str, messages: Optional[list[dict]] = None) -> Dict[str, Any]:
         question = question.strip()
         if not question:
             return {"answer": "Please provide a business question.", "agents": []}
@@ -52,7 +52,7 @@ class Orchestrator:
         if is_smalltalk(question):
             return {"answer": smalltalk_response(lang), "agents": []}
 
-        selected_tools = self._route(question)
+        selected_tools = self._route(question, messages=messages)
         tool_map: Dict[str, Callable[[str], str]] = {
             "sales_tool": self._sales_tool,
             "inventory_tool": self._inventory_tool,
@@ -74,12 +74,24 @@ class Orchestrator:
             except Exception as error:
                 tool_outputs[tool_name] = f"{tool_name} failed: {error}"
 
-        answer = synthesize_business_answer(question, tool_outputs, lang)
+        answer = synthesize_business_answer(
+            question,
+            tool_outputs,
+            lang,
+            used_agents=self.execution_trace,
+            strict=True,
+        )
         return {"answer": answer, "agents": self.execution_trace}
 
-    def _route(self, question: str) -> List[str]:
+    def _route(self, question: str, messages: Optional[list[dict]] = None) -> List[str]:
         low = question.lower()
         tools: List[str] = []
+
+        # If the user message is contextual/short ("выбрал KPI", "а потом что?"),
+        # infer the domain from the recent conversation so we don't fall back to knowledge.
+        inferred = self._infer_domain_from_history(messages)
+        if inferred and self._looks_like_contextual_followup(low):
+            return [f"{inferred}_tool"]
 
         sales_kw = [
             "sales",
@@ -175,3 +187,43 @@ class Orchestrator:
 
     def _contains_any(self, text: str, keywords: List[str]) -> bool:
         return any(keyword in text for keyword in keywords)
+
+    def _infer_domain_from_history(self, messages: Optional[list[dict]]) -> Optional[str]:
+        if not messages:
+            return None
+
+        # Scan backwards for the most recent user message that clearly belongs to a domain.
+        # We intentionally ignore assistant messages so the user's own intent drives routing.
+        for msg in reversed(messages):
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") != "user":
+                continue
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            routed = self._route(content, messages=None)
+            for tool in routed:
+                if tool in ("sales_tool", "inventory_tool", "finance_tool", "hr_tool"):
+                    return tool.replace("_tool", "")
+        return None
+
+    def _looks_like_contextual_followup(self, low_question: str) -> bool:
+        # Keep this conservative: only short, conversational follow-ups that otherwise route nowhere.
+        followup_markers = [
+            "а потом",
+            "и что теперь",
+            "что дальше",
+            "дальше что",
+            "потом что",
+            "теперь что",
+            "выбрал",
+            "выбрала",
+            "kpi",
+            "кпи",
+            "ок",
+            "хорошо",
+        ]
+        if len(low_question) <= 40 and any(token in low_question for token in followup_markers):
+            return True
+        return False

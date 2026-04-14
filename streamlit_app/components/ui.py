@@ -75,7 +75,10 @@ def render_chat(api_url: str, current_page: str, api_available: bool = True):
         return
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
-        payload = {"question": prompt, "page": current_page}
+        # Send a short window of history so backend can resolve context.
+        # Keep it small to avoid large requests and latency.
+        history = st.session_state.messages[-12:]
+        payload = {"question": prompt, "page": current_page, "messages": history}
         try:
             response = requests.post(
                 f"{api_url}/chat",

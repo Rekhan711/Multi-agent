@@ -21,6 +21,7 @@ from .db.session import SessionLocal
 class ChatRequest(BaseModel):
     question: str
     page: Optional[str] = None
+    messages: Optional[list[dict]] = None
 
 
 class ChatResponse(BaseModel):
@@ -57,7 +58,7 @@ def startup_event():
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     orchestrator = Orchestrator(db)
-    result = orchestrator.handle(request.question)
+    result = orchestrator.handle(request.question, messages=request.messages)
     return ChatResponse(answer=result["answer"], agents=result.get("agents", []))
 
 

@@ -50,10 +50,14 @@ def gather_inventory_metrics(db: Session) -> dict:
     )
     low_stock = db.query(Inventory).filter(Inventory.stock <= 50).count()
     total_value = db.query(func.sum(Inventory.value)).scalar() or 0
+    total_units_in_stock = db.query(func.sum(Inventory.stock)).scalar() or 0
+    sku_count = db.query(func.count(Inventory.id)).scalar() or 0
     return {
         "inventory_by_category": [{"category": row[0], "value": float(row[1])} for row in inventory_by_category],
         "low_stock_items": int(low_stock),
         "total_inventory_value": float(total_value),
+        "total_units_in_stock": int(total_units_in_stock),
+        "sku_count": int(sku_count),
     }
 
 

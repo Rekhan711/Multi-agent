@@ -70,122 +70,193 @@ def _normalize_tool_output(tool_name: str, text: str, lang: str) -> str:
             return "Umumiy bilimlar mavjud, lekin bu savol uchun aniq metrikalar hozircha topilmadi."
         return "General business knowledge is available, but no specific metric was found for this question."
 
-    if lang == "ru":
-        label_map = {
-            "sales_tool": "Продажи",
-            "finance_tool": "Финансы",
-            "inventory_tool": "Склад",
-            "hr_tool": "HR",
-            "knowledge_tool": "Знания",
-        }
-    elif lang == "uz":
-        label_map = {
-            "sales_tool": "Savdo",
-            "finance_tool": "Moliya",
-            "inventory_tool": "Ombor",
-            "hr_tool": "HR",
-            "knowledge_tool": "Bilim bazasi",
-        }
-    else:
-        label_map = {
-            "sales_tool": "Sales",
-            "finance_tool": "Finance",
-            "inventory_tool": "Inventory",
-            "hr_tool": "HR",
-            "knowledge_tool": "Knowledge",
-        }
-
-    label = label_map.get(tool_name, tool_name)
+    label_map = {
+        "sales_tool": {"ru": "Продажи", "uz": "Savdo", "en": "Sales"},
+        "finance_tool": {"ru": "Финансы", "uz": "Moliya", "en": "Finance"},
+        "inventory_tool": {"ru": "Склад", "uz": "Ombor", "en": "Inventory"},
+        "hr_tool": {"ru": "HR", "uz": "HR", "en": "HR"},
+        "knowledge_tool": {"ru": "Знания", "uz": "Bilim bazasi", "en": "Knowledge"},
+    }
+    label = label_map.get(tool_name, {"ru": tool_name, "uz": tool_name, "en": tool_name}).get(lang, tool_name)
     return f"{label}: {value}"
 
 
-def _fallback_summary(question: str, tool_outputs: Dict[str, str], lang: str) -> str:
-    if is_smalltalk(question):
-        return smalltalk_response(lang)
+SECTION_TEMPLATES = {
+    "ru": {
+        "short": "Короткий ответ",
+        "facts": "Что подтверждено данными",
+        "unknowns": "Что пока не видно в данных",
+        "actions": "Следующие шаги",
+        "no_data": "Сейчас данных недостаточно для точного ответа. Уточните метрику и период.",
+    },
+    "uz": {
+        "short": "Qisqa javob",
+        "facts": "Ma'lumotlar bilan tasdiqlangan",
+        "unknowns": "Ma'lumotlarda ko'rinmayotgani",
+        "actions": "Keyingi qadamlar",
+        "no_data": "Hozircha aniq javob uchun yetarli ma'lumot yo'q. Iltimos, metrika va davrni aniqlang.",
+    },
+    "en": {
+        "short": "Short answer",
+        "facts": "What is supported by data",
+        "unknowns": "What is not visible in data",
+        "actions": "Next steps",
+        "no_data": "There is not enough data to answer precisely. Please clarify metric and period.",
+    },
+}
 
-    normalized = []
-    for name, text in tool_outputs.items():
-        cleaned = _normalize_tool_output(name, text, lang)
-        if cleaned:
-            normalized.append(cleaned)
 
-    q = question.lower()
-    asks_people_impact = any(
-        token in q
-        for token in ["сотруд", "персон", "employee", "xodim", "штат", "headcount", "hr"]
-    ) and any(token in q for token in ["продаж", "sales", "savdo", "рост", "oshir", "increase"])
+def _local_label(section: str, lang: str) -> str:
+    return SECTION_TEMPLATES.get(lang, SECTION_TEMPLATES["en"]).get(section, section)
 
-    if not normalized:
-        if lang == "ru":
-            return "Не вижу достаточных данных по этому вопросу. Уточните метрику или период (например: «продажи по регионам за месяц»)."
-        if lang == "uz":
-            return "Bu savol uchun yetarli ma'lumot topilmadi. Iltimos, metrika yoki davrni aniqlashtiring."
-        return "I don't have enough data for this question yet. Please specify metric and period."
 
-    if lang == "ru":
-        parts = ["Короткий ответ по данным:"]
-        parts.extend([f"- {line}" for line in normalized])
-        if asks_people_impact:
-            parts.append(
-                "- Влияние на сотрудников: рост продаж обычно увеличивает нагрузку на Sales, Customer Success и Operations; стоит заранее отслеживать headcount и текучесть."
-            )
-        parts.append("Следующий шаг: выберите 1 KPI и целевой период, чтобы оценить эффект решений.")
-        return "\n".join(parts)
+def _build_structured_facts(tool_outputs: Dict[str, str], lang: str) -> list[str]:
+    lines: list[str] = []
+    for tool_name, text in tool_outputs.items():
+        if not text or not text.strip():
+            continue
+        normalized = _normalize_tool_output(tool_name, text, lang)
+        if normalized:
+            lines.append(normalized)
+    return lines
 
-    if lang == "uz":
-        parts = ["Ma'lumotlarga tayangan qisqa javob:"]
-        parts.extend([f"- {line}" for line in normalized])
-        if asks_people_impact:
-            parts.append(
-                "- Xodimlarga ta'siri: savdo o'ssa Sales, Customer Success va Operations jamoalarida yuklama ortadi; headcount va turnover ko'rsatkichlarini oldindan kuzatish kerak."
-            )
-        parts.append("Keyingi qadam: bitta asosiy KPI va davrni tanlab, ta'sirni o'lchang.")
-        return "\n".join(parts)
 
-    parts = ["Data-based short answer:"]
-    parts.extend([f"- {line}" for line in normalized])
-    if asks_people_impact:
-        parts.append(
-            "- People impact: sales growth usually increases workload in Sales, Customer Success, and Operations; track headcount and attrition early."
+def _build_recommendations(used_agents: list[str] | None, lang: str) -> list[str]:
+    if not used_agents:
+        return [
+            {
+                "ru": "Уточните область (sales, inventory, finance, HR) и период для точного ответа.",
+                "uz": "Aniq javob uchun soha (savdo, ombor, moliya, HR) va davrni aniqlang.",
+                "en": "Clarify the area (sales, inventory, finance, HR) and period for a precise answer.",
+            }[lang]
+        ]
+
+    recs: list[str] = []
+    if "sales_tool" in used_agents:
+        recs.append(
+            {
+                "ru": "Посмотрите основную метрику продаж и сравните периоды.",
+                "uz": "Asosiy savdo metrikasini ko'rib chiqing va davrlarni solishtiring.",
+                "en": "Review the main sales metric and compare periods.",
+            }[lang]
         )
-    parts.append("Next step: pick one KPI and a period to measure impact.")
-    return "\n".join(parts)
+    if "inventory_tool" in used_agents:
+        recs.append(
+            {
+                "ru": "Выберите KPI для склада: (1) единицы на складе (сумма остатков), (2) SKU/позиций, (3) низкий остаток, (4) стоимость (общая/по категориям).",
+                "uz": "Ombor KPI ni tanlang: (1) birliklar (qoldiq summasi), (2) SKU/pozitsiyalar, (3) past zaxira, (4) qiymat (umumiy/kategoriya bo'yicha).",
+                "en": "Pick an inventory KPI: (1) total units (sum of quantities), (2) SKUs/positions, (3) low-stock count, (4) value (total/by category).",
+            }[lang]
+        )
+    if "finance_tool" in used_agents:
+        recs.append(
+            {
+                "ru": "Сравните прибыль и расходы за последние периоды, чтобы увидеть тренд.",
+                "uz": "So'nggi davrlarda foyda va xarajatlarni solishtiring, trendni aniqlang.",
+                "en": "Compare profit and expenses across recent periods to identify the trend.",
+            }[lang]
+        )
+    if "hr_tool" in used_agents:
+        recs.append(
+            {
+                "ru": "Отслеживайте headcount и текучесть, если вопрос связан с персоналом.",
+                "uz": "Savol xodimlar bilan bog'liq bo'lsa, headcount va turnover ni kuzating.",
+                "en": "Track headcount and turnover when the question involves personnel.",
+            }[lang]
+        )
+    if not recs:
+        recs.append(
+            {
+                "ru": "Назовите 1 KPI, который хотите увидеть, и (если применимо) период — я отвечу строго по данным.",
+                "uz": "Ko'rmoqchi bo'lgan 1 KPI ni va (kerak bo'lsa) davrni ayting — men faqat ma'lumotlarga tayanib javob beraman.",
+                "en": "Name 1 KPI you want and (if applicable) a period — I’ll answer strictly from the data.",
+            }[lang]
+        )
+    return recs
 
 
-def synthesize_business_answer(question: str, tool_outputs: Dict[str, str], lang: str) -> str:
+def _compose_structured_answer(
+    question: str,
+    tool_outputs: Dict[str, str],
+    used_agents: list[str] | None,
+    lang: str,
+) -> str:
+    facts = _build_structured_facts(tool_outputs, lang)
+    has_data = bool(facts)
+    unknowns: list[str] = []
+    if not has_data:
+        unknowns = [SECTION_TEMPLATES[lang]["no_data"]]
+    else:
+        unknowns = [
+            {
+                "ru": "Не видно точного периода, если он не указан в запросе.",
+                "uz": "Agar davr ko'rsatilmagan bo'lsa, aniq davr ko'rinmaydi.",
+                "en": "The exact period is not visible if it is not specified in the request.",
+            }[lang]
+        ]
+    actions = _build_recommendations(used_agents, lang)
+
+    short_answer = facts[0] if facts else SECTION_TEMPLATES[lang]["no_data"]
+    return "\n\n".join(
+        [
+            f"{_local_label('short', lang)}:\n- {short_answer}",
+            f"{_local_label('facts', lang)}:\n" + ("\n".join(f"- {line}" for line in facts) if facts else "-"),
+            f"{_local_label('unknowns', lang)}:\n" + ("\n".join(f"- {line}" for line in unknowns) if unknowns else "-"),
+            f"{_local_label('actions', lang)}:\n" + ("\n".join(f"- {line}" for line in actions) if actions else "-"),
+        ]
+    )
+
+
+def synthesize_business_answer(
+    question: str,
+    tool_outputs: Dict[str, str],
+    lang: str,
+    used_agents: list[str] | None = None,
+    strict: bool = True,
+) -> str:
     if is_smalltalk(question):
         return smalltalk_response(lang)
+
+    has_tool_data = any(text and text.strip() for text in tool_outputs.values())
+    if not has_tool_data:
+        return _compose_structured_answer(question, tool_outputs, used_agents, lang)
 
     client = get_openai_client()
     if client is None:
-        return _fallback_summary(question, tool_outputs, lang)
+        return _compose_structured_answer(question, tool_outputs, used_agents, lang)
 
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     lang_instruction = {"ru": "Russian", "uz": "Uzbek", "en": "English"}.get(lang, "English")
-    tools_block = "\n".join([f"{name}: {value}" for name, value in tool_outputs.items() if value])
+    tools_block = "\n".join([f"{name}: {value.strip()}" for name, value in tool_outputs.items() if value and value.strip()])
+    agents_block = ", ".join(used_agents or []) or "none"
 
     prompt = (
         f"User question:\n{question}\n\n"
-        f"Tool outputs:\n{tools_block or 'No tool outputs'}\n\n"
-        "Rules:\n"
-        "- Use only facts from tool outputs.\n"
-        "- If data is insufficient, explicitly say so.\n"
+        f"Used agents:\n{agents_block}\n\n"
+        f"Tool outputs:\n{tools_block}\n\n"
+        "Instructions:\n"
+        "- Answer only from the tool outputs.\n"
+        "- Use only the facts that are present.\n"
         "- Do not invent metrics, dates, or causes.\n"
-        "- Keep answer concise and practical.\n"
-        f"Respond only in {lang_instruction}."
+        "- Do not repeat raw tool text verbatim.\n"
+        "- If the data is incomplete, say so explicitly.\n"
+        "- Keep the answer concise and structured.\n"
+        "- Output exactly four sections with headings.\n"
+        f"- Respond in {lang_instruction}.\n"
+        f"{_local_label('short', lang)}:\n"
+        f"{_local_label('facts', lang)}:\n"
+        f"{_local_label('unknowns', lang)}:\n"
+        f"{_local_label('actions', lang)}:\n"
     )
 
     try:
         response = client.responses.create(
             model=model,
             input=[
-                {
-                    "role": "system",
-                    "content": "You are a BI analyst. Be accurate, grounded, and never hallucinate.",
-                },
+                {"role": "system", "content": "You are a strict BI assistant. Base the answer only on provided tool outputs."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,
+            temperature=0.0,
         )
         answer = (response.output_text or "").strip()
         if answer:
@@ -193,4 +264,4 @@ def synthesize_business_answer(question: str, tool_outputs: Dict[str, str], lang
     except Exception:
         pass
 
-    return _fallback_summary(question, tool_outputs, lang)
+    return _compose_structured_answer(question, tool_outputs, used_agents, lang)

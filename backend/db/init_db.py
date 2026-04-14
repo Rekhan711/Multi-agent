@@ -1,4 +1,6 @@
-from datetime import date
+from datetime import date, timedelta
+import os
+import random
 from sqlalchemy.exc import SQLAlchemyError
 
 from .models import Base, Sales, Inventory, Finance, Employee
@@ -18,6 +20,13 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     session = SessionLocal()
     try:
+        # Synthetic data scale (kept deterministic via fixed seed below).
+        # This makes the chat and dashboards feel "alive" without requiring a real warehouse.
+        # Set to 0 to keep only the small handcrafted samples.
+        synthetic_scale = int(os.getenv("SYNTHETIC_DATA_SCALE", "3"))
+        synthetic_scale = max(0, min(synthetic_scale, 20))
+        rng = random.Random(42)
+
         sales_samples = [
             Sales(date=date(2024, 1, 15), product="Cloud CRM", region="North America", revenue=120000.0, quantity=40),
             Sales(date=date(2024, 2, 11), product="Analytics Suite", region="Europe", revenue=98000.0, quantity=34),
@@ -86,6 +95,99 @@ def init_db():
             Employee(department="Sales", hire_date=date(2024, 8, 1), termination_date=date(2024, 11, 15), salary=86000.0),
             Employee(department="Operations", hire_date=date(2024, 9, 3), termination_date=date(2024, 12, 20), salary=78000.0),
         ]
+
+        if synthetic_scale > 0:
+            products = [
+                "Cloud CRM",
+                "Analytics Suite",
+                "Mobile POS",
+                "Data Warehouse Pro",
+                "AI Forecasting",
+                "POS Terminal Gen2",
+                "Barcode Scanner X",
+                "Retail Tablet",
+                "Support Premium",
+                "Implementation Pack",
+                "BI Connector Pack",
+                "Security Module",
+            ]
+            regions = ["North America", "Europe", "APAC", "LATAM", "Middle East", "Africa"]
+
+            # Add additional synthetic products (keeps inventory richer).
+            categories = ["Software", "Hardware", "Services", "Add-ons"]
+            for i in range(1, 1 + 60 * synthetic_scale):
+                cat = categories[i % len(categories)]
+                prod = f"{cat} Item {i:03d}"
+                stock = rng.randint(0, 260)
+                # Value roughly proportional to stock with noise.
+                unit_value = rng.uniform(120.0, 2400.0) * (1.4 if cat == "Software" else 1.0)
+                value = round(stock * unit_value, 2)
+                inventory_samples.append(Inventory(product=prod, category=cat, stock=stock, value=value))
+
+            # Sales: daily-ish for ~18 months, weighted by product and region.
+            start_day = date(2023, 7, 1)
+            days = 540
+            sale_products = products + [f"Software Item {i:03d}" for i in range(1, 1 + 20 * synthetic_scale)]
+            for d in range(days):
+                day = start_day + timedelta(days=d)
+                # few deals per day
+                deals = rng.randint(1, 3 + synthetic_scale)
+                for _ in range(deals):
+                    product = rng.choice(sale_products)
+                    region = rng.choice(regions)
+                    quantity = rng.randint(1, 8 + synthetic_scale * 2)
+                    base = rng.uniform(1800, 12000) * (1.6 if "Software" in product or product in products[:5] else 1.0)
+                    season = 1.0 + 0.08 * (1 if day.month in (10, 11, 12) else 0)
+                    revenue = round(base * quantity * season, 2)
+                    sales_samples.append(Sales(date=day, product=product, region=region, revenue=revenue, quantity=quantity))
+
+            # Finance: month-end series for 24 months.
+            month_end = date(2023, 1, 31)
+            for m in range(24):
+                # Approx month-end by adding ~30 days then snapping back a bit if needed.
+                approx = month_end + timedelta(days=30 * m)
+                month_end_day = date(approx.year, approx.month, 28)
+                # Simple trend + noise.
+                revenue = 190000 + m * (8500 + 800 * synthetic_scale) + rng.randint(-15000, 20000)
+                expense = 120000 + m * (6200 + 550 * synthetic_scale) + rng.randint(-12000, 18000)
+                profit = revenue - expense
+                finance_samples.append(
+                    Finance(
+                        date=month_end_day,
+                        revenue=float(revenue),
+                        expense=float(expense),
+                        profit=float(profit),
+                    )
+                )
+
+            # Employees: hires over time + some terminations.
+            departments = ["Sales", "Finance", "HR", "Engineering", "Operations", "Customer Success", "Marketing"]
+            base_hire = date(2023, 1, 1)
+            for i in range(1, 1 + 50 * synthetic_scale):
+                dept = rng.choice(departments)
+                hire = base_hire + timedelta(days=rng.randint(0, 700))
+                salary_band = {
+                    "Engineering": (95000, 165000),
+                    "Sales": (65000, 130000),
+                    "Finance": (70000, 125000),
+                    "HR": (60000, 105000),
+                    "Operations": (55000, 98000),
+                    "Customer Success": (55000, 105000),
+                    "Marketing": (60000, 120000),
+                }[dept]
+                salary = float(rng.randint(*salary_band))
+                # ~18% termination rate in sample
+                termination = None
+                if rng.random() < 0.18:
+                    termination = hire + timedelta(days=rng.randint(30, 420))
+                employee_samples.append(
+                    Employee(
+                        department=dept,
+                        hire_date=hire,
+                        termination_date=termination,
+                        salary=salary,
+                    )
+                )
 
         _add_missing(
             session,
