@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core.llm_client import detect_language
@@ -40,6 +41,47 @@ class SalesAgent:
             if lang == "uz":
                 return f"Hududlar bo'yicha daromad: {region_lines}."
             return f"Revenue by region: {region_lines}."
+
+        if "trend" in lower or "monthly" in lower or "quarter" in lower or "month" in lower or "period" in lower:
+            monthly = metrics.get("monthly_revenue", [])
+            if monthly:
+                latest = monthly[-1]
+                previous = monthly[-2] if len(monthly) > 1 else None
+                if previous and latest["revenue"] >= previous["revenue"]:
+                    trend = "rising"
+                else:
+                    trend = "declining" if previous else "stable"
+                if lang == "ru":
+                    return (
+                        f"Тренд выручки по дням: последний день {latest['date']} с выручкой ${latest['revenue']:.0f}, "
+                        f"тренд {trend}."
+                    )
+                if lang == "uz":
+                    return (
+                        f"Daromad trendi: oxirgi sana {latest['date']} da ${latest['revenue']:.0f}, "
+                        f"trend {trend}."
+                    )
+                return (
+                    f"Revenue trend: last date {latest['date']} with ${latest['revenue']:.0f}, trend is {trend}."
+                )
+
+        if "average" in lower or "avg" in lower or "средний" in lower:
+            total_revenue = sum(item["revenue"] for item in metrics["sales_by_product"])
+            total_deals = self.db.query(Sales).count()
+            average = total_revenue / total_deals if total_deals else 0
+            if lang == "ru":
+                return f"Средний чек по всем сделкам: ${average:.2f}."
+            if lang == "uz":
+                return f"Barcha bitimlarning o'rtacha qiymati: ${average:.2f}."
+            return f"Average deal size is ${average:.2f}."
+
+        if "quantity" in lower or "units" in lower or "количеств" in lower or "штук" in lower:
+            total_quantity = self.db.query(func.sum(Sales.quantity)).scalar() or 0
+            if lang == "ru":
+                return f"Общее количество проданных единиц: {int(total_quantity)}."
+            if lang == "uz":
+                return f"Sotilgan birliklar soni: {int(total_quantity)}."
+            return f"Total units sold: {int(total_quantity)}."
 
         if any(
             token in lower

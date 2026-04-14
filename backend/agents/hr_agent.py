@@ -70,6 +70,31 @@ class HRAgent:
                 return f"Bo'limlar kesimidagi taqsimot: {breakdown}."
             return f"Employee distribution by department: {breakdown}."
 
+        if (
+            "turnover rate" in lower
+            or "attrition rate" in lower
+            or ("%" in lower and "turnover" in lower)
+        ):
+            if metrics['headcount']:
+                rate = metrics['turnover'] / metrics['headcount'] * 100
+                if lang == "ru":
+                    return f"Текучесть составляет примерно {rate:.1f}% от общего headcount."
+                if lang == "uz":
+                    return f"Turnover taxminan umumiy headcountning {rate:.1f}% ini tashkil etadi."
+                return f"Turnover rate is approximately {rate:.1f}% of total headcount."
+            if lang == "ru":
+                return "Недостаточно данных для вычисления коэффициента текучести."
+            if lang == "uz":
+                return "Turnover koeffitsientini hisoblash uchun yetarli ma'lumot yo'q."
+            return "Not enough data to calculate turnover rate."
+
+        if "hiring" in lower or "hire" in lower or "yollash" in lower:
+            if lang == "ru":
+                return "На данный момент HR-данные доступны по общему headcount, текучести и распределению по отделам."
+            if lang == "uz":
+                return "Hozirgi HR ma'lumotlari umumiy headcount, turnover va bo'limlar bo'yicha taqsimotni qamrab oladi."
+            return "Current HR data covers total headcount, turnover, and department distribution."
+
         if lang == "ru":
             return "HR-аналитика доступна по headcount, текучести, найму и распределению по отделам."
         if lang == "uz":

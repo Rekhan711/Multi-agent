@@ -1,7 +1,13 @@
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core.knowledge_index import BusinessKnowledgeIndex
-from ..core.llm_client import detect_language, is_smalltalk, smalltalk_response, synthesize_business_answer
+from ..core.llm_client import (
+    choose_tools_for_question,
+    detect_language,
+    is_smalltalk,
+    smalltalk_response,
+    synthesize_business_answer,
+)
 from .finance_agent import FinanceAgent
 from .hr_agent import HRAgent
 from .inventory_agent import InventoryAgent
@@ -42,7 +48,7 @@ class Orchestrator:
         self._record("knowledge")
         return self.knowledge_index.query(query)
 
-    def handle(self, question: str, messages: Optional[list[dict]] = None) -> Dict[str, Any]:
+    def handle(self, question: str, page: Optional[str] = None, messages: Optional[list[dict]] = None) -> Dict[str, Any]:
         question = question.strip()
         if not question:
             return {"answer": "Please provide a business question.", "agents": []}
@@ -52,7 +58,7 @@ class Orchestrator:
         if is_smalltalk(question):
             return {"answer": smalltalk_response(lang), "agents": []}
 
-        selected_tools = self._route(question, messages=messages)
+        selected_tools = self._route(question, page=page, messages=messages)
         tool_map: Dict[str, Callable[[str], str]] = {
             "sales_tool": self._sales_tool,
             "inventory_tool": self._inventory_tool,
@@ -83,15 +89,36 @@ class Orchestrator:
         )
         return {"answer": answer, "agents": self.execution_trace}
 
-    def _route(self, question: str, messages: Optional[list[dict]] = None) -> List[str]:
+    def _route(self, question: str, page: Optional[str] = None, messages: Optional[list[dict]] = None) -> List[str]:
         low = question.lower()
-        tools: List[str] = []
+        page_hint = (page or "").strip().lower()
+        page_tools = {
+            "dashboard": "knowledge_tool",
+            "sales": "sales_tool",
+            "inventory": "inventory_tool",
+            "finance": "finance_tool",
+            "hr": "hr_tool",
+        }
 
         # If the user message is contextual/short ("выбрал KPI", "а потом что?"),
         # infer the domain from the recent conversation so we don't fall back to knowledge.
         inferred = self._infer_domain_from_history(messages)
         if inferred and self._looks_like_contextual_followup(low):
             return [f"{inferred}_tool"]
+
+        # Use the page context as a strong hint for routing.
+        if page_hint and page_hint in page_tools:
+            page_tool = page_tools[page_hint]
+        else:
+            page_tool = None
+
+        selected_tools = choose_tools_for_question(question, page=page_hint, messages=messages)
+        if selected_tools:
+            if page_tool and page_tool not in selected_tools:
+                selected_tools.append(page_tool)
+            return selected_tools
+
+        tools: List[str] = []
 
         sales_kw = [
             "sales",
@@ -182,8 +209,14 @@ class Orchestrator:
         if self._contains_any(low, hr_kw):
             tools.append("hr_tool")
         if self._contains_any(low, knowledge_kw):
-            tools.append("knowledge_tool")
-        return tools
+            if not any(tool in tools for tool in ["sales_tool", "inventory_tool", "finance_tool", "hr_tool"]):
+                tools.append("knowledge_tool")
+
+        if tools:
+            return tools
+        if page_tool:
+            return [page_tool]
+        return ["knowledge_tool"]
 
     def _contains_any(self, text: str, keywords: List[str]) -> bool:
         return any(keyword in text for keyword in keywords)

@@ -1,5 +1,6 @@
 import os
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, List
 
 from openai import OpenAI
 
@@ -56,6 +57,94 @@ def get_openai_client() -> Optional[OpenAI]:
     if not api_key:
         return None
     return OpenAI(api_key=api_key)
+
+
+_TOOL_ALIASES = {
+    "sales_tool": "sales_tool",
+    "sales": "sales_tool",
+    "revenue": "sales_tool",
+    "inventory_tool": "inventory_tool",
+    "inventory": "inventory_tool",
+    "stock": "inventory_tool",
+    "finance_tool": "finance_tool",
+    "finance": "finance_tool",
+    "profit": "finance_tool",
+    "expense": "finance_tool",
+    "cash": "finance_tool",
+    "hr_tool": "hr_tool",
+    "hr": "hr_tool",
+    "employee": "hr_tool",
+    "employees": "hr_tool",
+    "knowledge_tool": "knowledge_tool",
+    "knowledge": "knowledge_tool",
+    "business": "knowledge_tool",
+    "market": "knowledge_tool",
+}
+
+
+def _parse_tool_selection(output: str) -> List[str]:
+    if not output:
+        return []
+
+    chosen: List[str] = []
+    tokens = re.split(r"[\n,;]+", output)
+    for token in tokens:
+        token = token.strip().lower()
+        if not token:
+            continue
+
+        if token in _TOOL_ALIASES:
+            tool_name = _TOOL_ALIASES[token]
+            if tool_name not in chosen:
+                chosen.append(tool_name)
+            continue
+
+        for alias, tool_name in _TOOL_ALIASES.items():
+            if alias in token and tool_name not in chosen:
+                chosen.append(tool_name)
+    return chosen
+
+
+def choose_tools_for_question(question: str, page: Optional[str] = None, messages: Optional[list[dict]] = None) -> List[str]:
+    client = get_openai_client()
+    if client is None:
+        return []
+
+    page_hint = page or "No page hint"
+    history_text = ""
+    if messages:
+        history = [msg.get("content", "") for msg in messages if isinstance(msg, dict) and msg.get("role") == "user"]
+        if history:
+            history_text = "\nConversation history:\n" + "\n".join(history[-3:])
+    prompt = (
+        "You are a strict business routing assistant. Choose the most relevant tools for the user's question. "
+        "Available tools: sales_tool, inventory_tool, finance_tool, hr_tool, knowledge_tool. "
+        "Use page context if it is helpful. Return only a comma-separated list of tool names, no explanation. "
+        f"Current page: {page_hint}.\n"
+        f"User question: {question}\n"
+        f"{history_text}\n"
+        "If the question mentions multiple domains, include multiple tool names. "
+        "If the question is general and not tied to a specific domain, include knowledge_tool. "
+        "If you are unsure, respond with knowledge_tool."
+    )
+
+    try:
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            input=[
+                {"role": "system", "content": "You are a tool router for a business intelligence system."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+        )
+        tool_output = getattr(response, "output_text", None)
+        if tool_output is None:
+            tool_output = "".join(
+                str(item) for item in getattr(response, "output", [])
+            )
+        return _parse_tool_selection(str(tool_output))
+    except Exception:
+        return []
 
 
 def _normalize_tool_output(tool_name: str, text: str, lang: str) -> str:

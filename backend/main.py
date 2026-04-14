@@ -58,7 +58,7 @@ def startup_event():
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     orchestrator = Orchestrator(db)
-    result = orchestrator.handle(request.question, messages=request.messages)
+    result = orchestrator.handle(request.question, page=request.page, messages=request.messages)
     return ChatResponse(answer=result["answer"], agents=result.get("agents", []))
 
 

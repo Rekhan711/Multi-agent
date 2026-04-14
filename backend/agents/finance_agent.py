@@ -34,6 +34,37 @@ class FinanceAgent:
                 return f"So'nggi foyda: ${latest_profit:.2f}; so'nggi xarajat: ${latest_expense:.2f}."
             return f"Latest profit is ${latest_profit:.2f}; latest expense is ${latest_expense:.2f}."
 
+        if "margin" in lower or "profit margin" in lower or "gross margin" in lower or "\u043f\u0440\u0438\u0431\u044b\u043b\u044c\u043d\u0430\u044f" in lower:
+            latest = trend[-1] if trend else None
+            if latest and latest["revenue"]:
+                margin = latest["profit"] / latest["revenue"] * 100
+                if lang == "ru":
+                    return f"Последняя маржа прибыли: {margin:.1f}% при выручке ${latest['revenue']:.0f}."
+                if lang == "uz":
+                    return f"So'nggi foyda marjasi: {margin:.1f}% va daromad ${latest['revenue']:.0f}."
+                return f"Latest profit margin is {margin:.1f}% on revenue ${latest['revenue']:.0f}."
+            if lang == "ru":
+                return "Последняя маржа прибыли не может быть рассчитана по текущим данным."
+            if lang == "uz":
+                return "So'nggi foyda marjasi mavjud ma'lumotlar bo'yicha hisoblanmadi."
+            return "Latest profit margin cannot be calculated from the current data."
+
+        if "trend" in lower or "month" in lower or "quarter" in lower or "period" in lower:
+            if trend:
+                latest = trend[-1]
+                previous = trend[-2] if len(trend) > 1 else None
+                trend_text = "stable"
+                if previous:
+                    if latest["revenue"] >= previous["revenue"]:
+                        trend_text = "up"
+                    else:
+                        trend_text = "down"
+                if lang == "ru":
+                    return f"Финансовый тренд: последний месяц {latest['date']} выручка ${latest['revenue']:.0f}, расходы ${latest['expense']:.0f}, прибыль ${latest['profit']:.0f}, тренд {trend_text}."
+                if lang == "uz":
+                    return f"Moliya trendi: oxirgi oy {latest['date']} daromad ${latest['revenue']:.0f}, xarajat ${latest['expense']:.0f}, foyda ${latest['profit']:.0f}, trend {trend_text}."
+                return f"Finance trend: latest month {latest['date']} revenue ${latest['revenue']:.0f}, expense ${latest['expense']:.0f}, profit ${latest['profit']:.0f}, trend {trend_text}."
+
         if asks_profit:
             profits = [row["profit"] for row in trend]
             latest = profits[-1] if profits else 0
